@@ -16,3 +16,6 @@ class Company:
     sector: str
     moat: str
     price_history: List[float]
+    fair_value_gap: float
+    fair_value: float
+    attractiveness_score: int

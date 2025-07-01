@@ -1,7 +1,8 @@
+from dataclasses import asdict
 import json
 from app.mocks.mock_response import OVERVIEW, GLOBAL_QUOTE, TIME_SERIES_MONTHLY_ADJUSTED
 import os
-from app.domain.stocks_domain import get_companies_data_from_file, is_data_recent, safe_number
+from app.domain.stocks_domain import buil_companies_data_from_dataframe, get_companies_data_from_file, is_data_recent, safe_number
 from app.models.companies import Company
 import pandas as pd
 import os
@@ -12,17 +13,16 @@ GOOGLE_SHEET_CSV_HISTORY_PEA_URL = os.getenv("GOOGLE_SHEET_CSV_HISTORY_PEA_URL",
 GOOGLE_SHEET_CSV_CTO_URL = os.getenv("GOOGLE_SHEET_CSV_CTO_URL", "")
 GOOGLE_SHEET_CSV_HISTORY_CTO_URL = os.getenv("GOOGLE_SHEET_CSV_HISTORY_CTO_URL", "")
 
-def get_stock_data():
-    overview_data = OVERVIEW
-    global_quote_data = GLOBAL_QUOTE
-    time_series_monthly_adjusted_data = TIME_SERIES_MONTHLY_ADJUSTED
-    
-    response = {
-        "overview": overview_data,
-        "global_quote": global_quote_data,
-        "time_series_monthly_adjusted": time_series_monthly_adjusted_data
-    }
-    return response
+def get_company_data(ticker: str):
+    all_companies_data = get_companies_data()
+    for company in all_companies_data['pea']:
+        if company.ticker == ticker:
+            return asdict(company)
+    for company in all_companies_data['cto']:
+        if company.ticker == ticker:
+            return asdict(company)
+    return {"error": "Ticker not found"}, 404
+
 
 # def safe_fetch(url: str, ticker: str) -> dict:
 #     try:
@@ -119,42 +119,7 @@ def download_and_parse_sheet(url_data: str, url_history: str) -> list[dict]:
     df = pd.read_csv(url_data, on_bad_lines='skip')
     df.columns = df.columns.str.strip().str.replace('\ufeff', '')  # clean headers
     df_history = pd.read_csv(url_history, on_bad_lines='skip', header=0)
-
-    companies = []
-
-    for i, row in df.iterrows():
-        ticker = str(row["Ticker"]).strip()
-
-        company = {
-            "ticker": ticker,
-            "name": row["Nom"],
-            "market_cap": row["Market Cap"],
-            "currency": row["Devise"],
-            "price": row["Price"],
-            "high_price": row["Plus haut prix"],
-            "drop_from_high": row["Plus haut"],
-            "pe": safe_number(row["PE"]),
-            "daily_change": row["cours J %"],
-            "eps": safe_number(row["EPS"]),
-            "sector": row["Secteur"],
-            "moat": row.get("Type de Moat principal", ""),
-            "price_history": [],
-        }
-
-        # Assume each ticker has 2 columns: Date | Close (skip date)
-        col_idx = i * 2 + 1  # skip the date column, get "Close"
-        if col_idx < df_history.shape[1]:
-            raw_prices = df_history.iloc[:, col_idx].dropna().astype(str)
-            prices = []
-
-            for p in raw_prices:
-                try:
-                    prices.append(float(p.replace(",", ".").replace("€", "").strip()))
-                except ValueError:
-                    continue
-            company["price_history"] = prices
-        companies.append(company)
-
+    companies = buil_companies_data_from_dataframe(df, df_history)
     return companies
 
 

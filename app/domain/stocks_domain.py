@@ -2,17 +2,36 @@ from datetime import date, datetime, timedelta
 import json
 import math
 import os
+import re
 from typing import Union
+
+from pandas import DataFrame, Series
 from app.models.companies import Company
 from dataclasses import asdict
 
-def build_company_data(company_info: any, global_quote: any, time_series: any) -> Union[Company, None]:
+SECTOR_PE_BASELINES = {
+    'technologie': 20,
+    'santé': 18,
+    'santé/healthcare': 18,
+    'énergie': 12,
+    'industrie': 15,
+    'luxe': 25,
+    'finance': 12,
+    'services': 15,
+    'consommation': 18,
+    'media': 16
+}
+DEFAULT_PE_BASELINE = 15
+
+def build_company_data(company_info: dict, global_quote: dict, time_series: dict) -> Union[Company, None]:
     company = None
     try:
         price = float(global_quote['Global Quote']['05. price'])
         high_price = float(company_info['52WeekHigh'])
         drop_from_high = f"{((price - high_price) / high_price) * 100:.2f}%"
         price_history_10y = get_last_10_years_price_history(time_series)
+        discount, fair_value =  calculate_fair_discount_and_fair_value(company_info, price)      
+        attractiveness_score = calculate_attractiveness_score(company_info, price, high_price)
         company = Company(
             ticker=company_info['Symbol'],
             name=company_info['Name'],
@@ -25,6 +44,9 @@ def build_company_data(company_info: any, global_quote: any, time_series: any) -
             daily_change=global_quote['Global Quote']['10. change percent'],
             eps=str(company_info['EPS']),
             sector=company_info['Sector'].lower(),
+            fair_value_gap=safe_number(discount),
+            fair_value=safe_number(fair_value),
+            attractiveness_score=attractiveness_score,
             moat='-',
             price_history=price_history_10y
         )
@@ -43,6 +65,59 @@ def get_last_10_years_price_history(time_series: dict) -> list[float]:
         for date_str, data in sorted(time_series.items())
         if datetime.strptime(date_str, "%Y-%m-%d") >= ten_years_ago
     ]
+
+def parse_float(value: any) -> float:
+    """Cleans and converts a string to float, returns 0.0 if invalid."""
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        value = re.sub(r'[^\d\-,\.]', '', str(value))  # keep digits, dot, comma, minus
+        value = value.replace(',', '.')  # convert comma decimal to dot
+        return float(value)
+    except:
+        return 0.0
+
+def calculate_fair_discount_and_fair_value(row: Series) -> tuple[float, float]:
+    try:
+        sector = str(row.get("Secteur", "")).lower()
+        baseline_pe = SECTOR_PE_BASELINES.get(sector, DEFAULT_PE_BASELINE)
+
+        eps = parse_float(row.get("EPS", 0))
+        price = parse_float(row.get("Price", 0))
+
+        if eps <= 0:
+            return 0.0, 0.0
+
+        fair_value = eps * baseline_pe
+        discount = ((fair_value - price) / fair_value) * 100
+        return round(discount, 2), round(fair_value, 2)
+
+    except Exception as e:
+        print(f"Error calculating fair discount: {e}")
+        return 0.0, 0.0
+
+
+def calculate_attractiveness_score(row: Series) -> int:
+    try:
+        pe = parse_float(row.get("PE", 0))
+        eps = parse_float(row.get("EPS", 0))
+        price = parse_float(row.get("Price", 0))
+        high = parse_float(row.get("Plus haut prix", 0))
+
+        drop = (price - high) / high if high else 0
+
+        sector = str(row.get("Secteur", "")).lower()
+        baseline_pe = SECTOR_PE_BASELINES.get(sector, DEFAULT_PE_BASELINE)
+
+        pe_score = max(0, min(1, (baseline_pe * 2 - pe) / baseline_pe))
+        eps_score = max(0, min(1, (eps + 5) / 25))
+        drop_score = max(0, min(1, abs(drop) / 0.5))
+
+        attractiveness = int((pe_score * 0.3 + eps_score * 0.3 + drop_score * 0.4) * 100)
+        return attractiveness
+    except Exception as e:
+        print(f"Error calculating attractiveness score: {e}")
+        return 0
 
 
 def save_companies_data(companies: list[Company], save_path: str='data') -> None:
@@ -79,6 +154,47 @@ def is_data_recent(companies_type: str, max_age_days: int = 4) -> bool:
     except Exception as e:
         print(f"[{companies_type}] Erreur lors de la vérification de la date des fichiers : {e}")
         return False
+
+def buil_companies_data_from_dataframe(df: DataFrame, df_history: DataFrame) -> list[Company]:
+    companies = []
+
+    for i, row in df.iterrows():
+        ticker = str(row["Ticker"]).strip()
+        discount, fair_value = calculate_fair_discount_and_fair_value(row)      
+        attractiveness_score = calculate_attractiveness_score(row)
+        company = {
+            "ticker": ticker,
+            "name": row["Nom"],
+            "market_cap": row["Market Cap"],
+            "currency": row["Devise"],
+            "price": row["Price"],
+            "high_price": row["Plus haut prix"],
+            "drop_from_high": row["Plus haut"],
+            "pe": safe_number(row["PE"]),
+            "daily_change": row["cours J %"],
+            "eps": safe_number(row["EPS"]),
+            "sector": row["Secteur"],
+            "fair_value_gap": safe_number(discount),
+            "fair_value": safe_number(fair_value),
+            "attractiveness_score": attractiveness_score,
+            "moat": row.get("Type de Moat principal", ""),
+            "price_history": [],
+        }
+
+        # Assume each ticker has 2 columns: Date | Close (skip date)
+        col_idx = i * 2 + 1  # skip the date column, get "Close"
+        if col_idx < df_history.shape[1]:
+            raw_prices = df_history.iloc[:, col_idx].dropna().astype(str)
+            prices = []
+
+            for p in raw_prices:
+                try:
+                    prices.append(float(p.replace(",", ".").replace("€", "").strip()))
+                except ValueError:
+                    continue
+            company["price_history"] = prices
+        companies.append(company)
+    return companies
 
 def get_companies_data_from_file(companies_type: str) -> list[Company]:
     today = date.today().isoformat()
