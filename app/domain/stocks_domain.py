@@ -3,7 +3,7 @@ import json
 import math
 import os
 import re
-from typing import Union
+from typing import List, Union
 
 from pandas import DataFrame, Series
 from app.models.companies import Company
@@ -23,40 +23,41 @@ SECTOR_PE_BASELINES = {
 }
 DEFAULT_PE_BASELINE = 15
 
-def build_company_data(company_info: dict, global_quote: dict, time_series: dict) -> Union[Company, None]:
-    company = None
-    try:
-        price = float(global_quote['Global Quote']['05. price'])
-        high_price = float(company_info['52WeekHigh'])
-        drop_from_high = f"{((price - high_price) / high_price) * 100:.2f}%"
-        price_history_10y = get_last_10_years_price_history(time_series)
-        discount, fair_value =  calculate_fair_discount_and_fair_value(company_info, price)      
-        attractiveness_score = calculate_attractiveness_score(company_info, price, high_price)
-        company = Company(
-            ticker=company_info['Symbol'],
-            name=company_info['Name'],
-            market_cap=company_info['MarketCapitalization'],
-            currency=company_info['Currency'],
-            price=global_quote['Global Quote']['05. price'],
-            high_price=company_info['52WeekHigh'],
-            drop_from_high=drop_from_high,
-            pe=str(company_info['PERatio']),
-            daily_change=global_quote['Global Quote']['10. change percent'],
-            eps=str(company_info['EPS']),
-            sector=company_info['Sector'].lower(),
-            fair_value_gap=safe_number(discount),
-            fair_value=safe_number(fair_value),
-            attractiveness_score=attractiveness_score,
-            moat='-',
-            price_history=price_history_10y
-        )
-    except KeyError as e:
-        print(f"KeyError: {e} - Missing data in company_info or global_quote")
-        return None
-    except Exception as e:
-        print(f"An error occurred while building company data: {e}")
-        return None
-    return company
+# def build_company_data(company_info: dict, global_quote: dict, time_series: dict) -> Union[Company, None]:
+#     company = None
+#     try:
+#         price = float(global_quote['Global Quote']['05. price'])
+#         high_price = float(company_info['52WeekHigh'])
+#         drop_from_high = f"{((price - high_price) / high_price) * 100:.2f}%"
+#         price_history_10y = get_last_10_years_price_history(time_series)
+#         discount, fair_value =  calculate_fair_discount_and_fair_value(company_info, price)      
+#         attractiveness_score = calculate_attractiveness_score(company_info, price, high_price)
+#         company = Company(
+#             ticker=company_info['Symbol'],
+#             name=company_info['Name'],
+#             market_cap=company_info['MarketCapitalization'],
+#             currency=company_info['Currency'],
+#             price=global_quote['Global Quote']['05. price'],
+#             high_price=company_info['52WeekHigh'],
+#             drop_from_high=drop_from_high,
+#             pe=str(company_info['PERatio']),
+#             daily_change=global_quote['Global Quote']['10. change percent'],
+#             eps=str(company_info['EPS']),
+#             sector=company_info['Sector'].lower(),
+#             fair_value_gap=safe_number(discount),
+#             fair_value=safe_number(fair_value),
+#             attractiveness_score=attractiveness_score,
+#             moat='-',
+#             price_history=price_history_10y,
+#             price_dates=[]
+#         )
+#     except KeyError as e:
+#         print(f"KeyError: {e} - Missing data in company_info or global_quote")
+#         return None
+#     except Exception as e:
+#         print(f"An error occurred while building company data: {e}")
+#         return None
+#     return company
 
 def get_last_10_years_price_history(time_series: dict) -> list[float]:
     ten_years_ago = datetime.today().replace(day=1) - timedelta(days=365 * 10)
@@ -155,7 +156,7 @@ def is_data_recent(companies_type: str, max_age_days: int = 4) -> bool:
         print(f"[{companies_type}] Erreur lors de la vérification de la date des fichiers : {e}")
         return False
 
-def buil_companies_data_from_dataframe(df: DataFrame, df_history: DataFrame) -> list[Company]:
+def buil_companies_data_from_dataframe(df: DataFrame, df_history: DataFrame) -> List[Company]:
     companies = []
 
     for i, row in df.iterrows():
@@ -179,20 +180,32 @@ def buil_companies_data_from_dataframe(df: DataFrame, df_history: DataFrame) -> 
             "attractiveness_score": attractiveness_score,
             "moat": row.get("Type de Moat principal", ""),
             "price_history": [],
+            "price_dates": []
         }
 
-        # Assume each ticker has 2 columns: Date | Close (skip date)
-        col_idx = i * 2 + 1  # skip the date column, get "Close"
-        if col_idx < df_history.shape[1]:
-            raw_prices = df_history.iloc[:, col_idx].dropna().astype(str)
-            prices = []
+        # Get columns: assume (Date | Close) repeating
+        date_col_idx = i * 2
+        price_col_idx = i * 2 + 1
 
-            for p in raw_prices:
+        if price_col_idx < df_history.shape[1]:
+            raw_dates = df_history.iloc[:, date_col_idx].dropna().astype(str).tolist()
+            raw_prices = df_history.iloc[:, price_col_idx].dropna().astype(str).tolist()
+
+            price_history = []
+            price_dates = []
+
+            for date_str, price_str in zip(raw_dates, raw_prices):
                 try:
-                    prices.append(float(p.replace(",", ".").replace("€", "").strip()))
+                    price = float(price_str.replace(",", ".").replace("€", "").strip())
+                    date_only = date_str.split(" ")[0]
+                    price_history.append(price)
+                    price_dates.append(date_only)
                 except ValueError:
                     continue
-            company["price_history"] = prices
+
+            company["price_history"] = price_history
+            company["price_dates"] = price_dates
+
         companies.append(company)
     return companies
 
