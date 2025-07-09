@@ -132,7 +132,7 @@ def save_companies_data(companies: list[Company], save_path: str='data') -> None
         json.dump(json_ready_companies, f, ensure_ascii=False, indent=2)
     print(f"✅ Saved company data to {filepath}")
 
-def is_data_recent(companies_type: str, max_age_days: int = 4) -> bool:
+def is_companies_data_recent(companies_type: str, max_age_days: int = 4) -> bool:
     folder = 'data/PEA' if companies_type == 'PEA' else 'data/CTO'
     today = date.today()
 

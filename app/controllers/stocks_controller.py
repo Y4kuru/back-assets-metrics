@@ -1,8 +1,7 @@
 from dataclasses import asdict
 import json
-from app.mocks.mock_response import OVERVIEW, GLOBAL_QUOTE, TIME_SERIES_MONTHLY_ADJUSTED
 import os
-from app.domain.stocks_domain import buil_companies_data_from_dataframe, get_companies_data_from_file, is_data_recent, safe_number
+from app.domain.stocks_domain import buil_companies_data_from_dataframe, get_companies_data_from_file, is_companies_data_recent
 from app.models.companies import Company
 import pandas as pd
 import os
@@ -73,8 +72,8 @@ def get_company_data(ticker: str):
 
 
 def load_companies_data():
-    is_pea_loaded = is_data_recent('PEA', 0)
-    is_cto_loaded = is_data_recent('CTO', 0)
+    is_pea_loaded = is_companies_data_recent('PEA', 0)
+    is_cto_loaded = is_companies_data_recent('CTO', 0)
     if is_pea_loaded and is_cto_loaded:
         print("Data already loaded for PEA and CTO.")
         companies_data_pea = get_companies_data_from_file('PEA')
