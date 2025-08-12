@@ -46,8 +46,8 @@ def load_and_get_realt_rent_data():
             df["Rent"] = (
                 df["Rent"]
                 .astype(str)
-                .str.replace("$", "")
-                .str.replace(",", ".")
+                .str.replace("$", "", regex=False)
+                .str.replace(",", ".", regex=False)
                 .astype(float)
             )
 
@@ -73,10 +73,14 @@ def load_and_get_realt_rent_data():
         with open(filepath, "r", encoding="utf-8") as f:
             rent_data = json.load(f)
 
+        # Calculate total rent
+        total_rent = round(sum(item["rent"] for item in rent_data), 2)
+
         # Split into labels and data
         response = {
             "dates": [item["date"] for item in rent_data],
             "rents": [item["rent"] for item in rent_data],
+            "total_rent": total_rent
         }
 
         return jsonify(response), 200
