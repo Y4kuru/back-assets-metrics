@@ -4,8 +4,10 @@ import os
 from app.domain.stocks_domain import buil_companies_data_from_dataframe, get_companies_data_from_file, is_companies_data_recent
 from app.models.companies import Company
 import pandas as pd
+import numpy as np
 import os
 from datetime import date
+from flask import jsonify
 
 GOOGLE_SHEET_CSV_PEA_URL = os.getenv("GOOGLE_SHEET_CSV_PEA_URL", "")
 GOOGLE_SHEET_CSV_HISTORY_PEA_URL = os.getenv("GOOGLE_SHEET_CSV_HISTORY_PEA_URL", "")
@@ -72,16 +74,17 @@ def get_company_data(ticker: str):
 
 
 def load_companies_data():
-    is_pea_loaded = is_companies_data_recent('PEA', 0)
+    # is_pea_loaded = is_companies_data_recent('PEA', 0)
     is_cto_loaded = is_companies_data_recent('CTO', 0)
-    if is_pea_loaded and is_cto_loaded:
-        print("Data already loaded for PEA and CTO.")
-        companies_data_pea = get_companies_data_from_file('PEA')
+    # if is_pea_loaded and is_cto_loaded:
+    if is_cto_loaded:
+        print("Data already loaded for CTO.")
         companies_data_cto = get_companies_data_from_file('CTO')
         return get_companies_data(), 200
-    companies_data_pea = download_and_parse_sheet(GOOGLE_SHEET_CSV_PEA_URL, GOOGLE_SHEET_CSV_HISTORY_PEA_URL)
+    # companies_data_pea = download_and_parse_sheet(GOOGLE_SHEET_CSV_PEA_URL, GOOGLE_SHEET_CSV_HISTORY_PEA_URL)
+    companies_data_pea = {}
     companies_data_cto = download_and_parse_sheet(GOOGLE_SHEET_CSV_CTO_URL, GOOGLE_SHEET_CSV_HISTORY_CTO_URL)
-    save_to_json(companies_data_pea, watchlist_name="PEA")
+    # save_to_json(companies_data_pea, watchlist_name="PEA")
     save_to_json(companies_data_cto, watchlist_name="CTO")
     
     # if is_pea_loaded and is_cto_loaded:
@@ -97,8 +100,7 @@ def load_companies_data():
     #     company_cto = WATCHLIST_CTO
     #     companies_data_cto = fetch_companies_data(company_cto)
     #     save_companies_data(companies_data_cto, 'data/CTO')
-    return { 'pea': companies_data_pea, 'cto': companies_data_cto}, 200
-
+    return jsonify({ 'pea': companies_data_pea, 'cto': companies_data_cto}), 200
 
 def get_companies_data() -> list[Company]:
     return { 
@@ -114,13 +116,41 @@ def get_companies_data_cto() -> list[Company]:
     print("get_companies_data_cto")
     return get_companies_data_from_file('CTO')
 
-def download_and_parse_sheet(url_data: str, url_history: str) -> list[dict]:
-    df = pd.read_csv(url_data, on_bad_lines='skip')
-    df.columns = df.columns.str.strip().str.replace('\ufeff', '')  # clean headers
-    df_history = pd.read_csv(url_history, on_bad_lines='skip', header=0)
-    companies = buil_companies_data_from_dataframe(df, df_history)
-    return companies
+# def download_and_parse_sheet(url_data: str, url_history: str) -> list[dict]:
+#     df = pd.read_csv(url_data, on_bad_lines='skip')
+#     df.columns = df.columns.str.strip().str.replace('\ufeff', '')  # clean headers
+#     df_history = pd.read_csv(url_history, on_bad_lines='skip', header=0)
+#     companies = buil_companies_data_from_dataframe(df, df_history)
+#     return companies
 
+def download_and_parse_sheet(url_data: str, url_history: str) -> list[dict]:
+    # 1. Lecture
+    df = pd.read_csv(url_data, on_bad_lines='skip')
+    df_history = pd.read_csv(url_history, on_bad_lines='skip', header=0)
+
+    # 2. Nettoyage des headers
+    df.columns = df.columns.str.strip().str.replace('\ufeff', '')
+    
+    # 3. Nettoyage des caractères invisibles dans TOUTES les colonnes texte
+    # On cible l'espace insécable (\u202f) et l'espace insécable classique (\u00a0)
+    for col in df.select_dtypes(include=['object']):
+        df[col] = (df[col].astype(str)
+                   .str.replace('\u202f', ' ', regex=False)
+                   .str.replace('\u00a0', ' ', regex=False)
+                   .str.strip())
+    
+    # 4. Gestion des NaN pour le JSON (évite les erreurs de parsing 'NaN' non standard)
+    df = df.replace({np.nan: None})
+
+    # 5. Construction
+    companies = buil_companies_data_from_dataframe(df, df_history)
+    
+    # 6. Sauvegarde du cache (optionnel ici, mais c'est là qu'il faut être vigilant)
+    # avec ensure_ascii=False pour garder les caractères propres
+    # with open('cache.json', 'w', encoding='utf-8') as f:
+    #     json.dump(companies, f, ensure_ascii=False)
+
+    return companies
 
 def save_to_json(companies, watchlist_name="PEA"):
     today = date.today().isoformat()
