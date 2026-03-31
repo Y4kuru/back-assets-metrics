@@ -121,6 +121,50 @@ def calculate_attractiveness_score(row: Series) -> int:
         return 0
 
 
+def calculate_long_term_quality_score(row: dict) -> int:
+    try:
+        pe = parse_float(row.get("PE", 0))
+        eps = parse_float(row.get("EPS", 0))
+        price = parse_float(row.get("Price", 0))
+        high52 = parse_float(row.get("Plus haut prix", 0))
+        beta = parse_float(row.get("Beta", 1.0))
+
+        # 1. BASE DE DÉPART
+        score = 100.0
+
+        # 2. PÉNALITÉ VALORISATION (Le "Tueur de Score")
+        # Un investisseur de santé financière ne paie pas n'importe quel prix.
+        if pe > 45: score *= 0.4  # Sanction massive
+        elif pe > 30: score *= 0.6 # Sanction sérieuse
+        elif pe > 20: score *= 0.8 # Ajustement léger
+        elif pe <= 0: score = 0    # Pas de profits = Pas de score
+        
+        # 3. PÉNALITÉ RENTABILITÉ (Yield)
+        yield_val = eps / price if price > 0 else 0
+        if yield_val < 0.03: # Sous 3%, c'est trop peu payé pour le risque
+            score *= 0.7
+        elif yield_val < 0.05:
+            score *= 0.9
+
+        # 4. PÉNALITÉ SANTÉ TECHNIQUE (Momentum)
+        ratio_high = price / high52 if high52 > 0 else 0
+        if ratio_high < 0.70: # Chute de plus de 30% = Danger sur la santé
+            score *= 0.5
+        elif ratio_high > 0.97: # Trop "cher", proche de l'euphorie
+            score *= 0.9
+
+        # 5. PÉNALITÉ RISQUE (Beta)
+        if beta > 1.4: # Trop volatile pour du long terme serein
+            score *= 0.8
+        elif beta > 1.1:
+            score *= 0.95
+
+        return int(score)
+
+    except Exception:
+        return 0
+
+
 def save_companies_data(companies: list[Company], save_path: str='data') -> None:
     postfix = save_path.replace('data/', '')
     os.makedirs(save_path, exist_ok=True)
@@ -162,7 +206,8 @@ def buil_companies_data_from_dataframe(df: DataFrame, df_history: DataFrame) -> 
     for i, row in df.iterrows():
         ticker = str(row["Ticker"]).strip()
         discount, fair_value = calculate_fair_discount_and_fair_value(row)      
-        attractiveness_score = calculate_attractiveness_score(row)
+        # attractiveness_score = calculate_attractiveness_score(row)
+        attractiveness_score = calculate_long_term_quality_score(row)
         company = {
             "ticker": ticker,
             "name": row["Nom"],
